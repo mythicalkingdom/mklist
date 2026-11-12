@@ -4,7 +4,10 @@ A Free Pascal port of the Rust `list` text-mode file browser (itself modelled on
 LIST): same keys, text and hex modes, status lines top and bottom, memory-windowed reading of big
 files, stdin as a pager, follow/tail, command history, remembered positions, bytes search, and regex search.
 
-    make            # needs fpc 3.2+; produces ./list (about 400 KB)
+    make                              # needs fpc 3.2+; produces ./list (about 420 KB)
+    make install                      # /usr/local/bin/list (may need sudo)
+    make install PREFIX=$HOME/.local  # ~/.local/bin/list
+    make test                         # behavioural tests (python3 + `pip install pyte`)
     ./list [-x] [-m SIZE] [- | file | wildcard | directory]...
     some-command | ./list
 
@@ -27,10 +30,19 @@ is highlighted, and in windowed (big) files a match longer than 4 KB that stradd
   no CP437 equivalent (CJK, emoji, ...) appear as `?`. Files that are not UTF-8 are shown as CP437, as before.
 * **Colours:** the 16 standard terminal colours (so exact shades depend on the terminal theme), and only 8
   background colours (0-7). Find highlight defaults to black on brown.
-* **Esc must be pressed twice** to act (quit / cancel the command line): the `Keyboard` unit cannot tell a
-  lone Esc from the start of an Alt-key sequence. F10, Alt-X and Ctrl-C quit at once.
-* A paste of more than ~256 bytes at once can stall until the next keypress (a bug in the unit's input ring).
+* **Keyboard:** on Unix the program has its own key decoder (`uKeys.pas`) instead of FPC's `Keyboard` unit,
+  which waits for a second key after Esc (freezing the program until then) and stalls on input bursts of more
+  than 256 bytes. A lone Esc is delivered after 40 ms, long pastes work, and UTF-8 can be typed on the command
+  line. Other platforms use the `Keyboard` unit (build with `-dFORCEKBD` to use it on Unix too).
 * Alt-E (25/43 rows) is not supported. Resizing the terminal works on Unix.
 * No threads: piped input is read with non-blocking reads from the main loop.
 * **Untested:** everything was developed and tested on Linux only. The Windows branches (stdin pipe via
   `PeekNamedPipe`, `PRN` printing, `%APPDATA%`) have not been compiled or run.
+
+## Tests
+
+`tests/run_tests.py` drives the program through a pseudo-terminal and reads the screen back with a terminal
+emulator (`pyte`), so it checks what a user would see: views, search and regex, big-file windowing and line
+numbers, stdin, follow/tail, Esc handling, key bursts, history, remembered positions, windows, copy, resize, etc.
+The same suite passes for the Rust version (`LIST_BIN=/path/to/list python3 tests/run_tests.py`), which keeps the
+two implementations in agreement. `-k NAME` selects tests and `-v` prints tracebacks.

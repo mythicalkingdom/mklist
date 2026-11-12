@@ -4,19 +4,12 @@ unit uApp;
 
 interface
 
-uses SysUtils, Classes, RegExpr, Video, Keyboard, {$IFDEF UNIX} BaseUnix, Unix, termio, {$ENDIF}
-     uOpts, uCP437, uScreen, uViewer, uSpool;
+uses SysUtils, Classes, RegExpr, Video, {$IFDEF UNIX} BaseUnix, Unix, termio, {$ENDIF}
+     uOpts, uCP437, uScreen, uViewer, uSpool, uKeys;
 
 type
   TMode = (mNormal, mInput, mHelp, mMenu, mToggles);
   TQuit = (qNone, qClear, qRestore);
-  TKeyKind = (kNone, kChar, kAlt, kF, kUp, kDown, kLeft, kRight, kPgUp, kPgDn, kHome, kEnd,
-              kEnter, kEsc, kBack, kDel, kTab, kCtrl);
-  TKey = record
-    kind: TKeyKind;
-    ch: Char;
-    n: Integer;
-  end;
   TEntry = record
     name: string;
     dir: Boolean;
@@ -57,7 +50,6 @@ type
 
     procedure CheckResize;
     function WaitInput(out k: TKey): Boolean;
-    function ReadKey(out k: TKey): Boolean;
     procedure Draw;
     procedure DrawHelp;
     procedure DrawMenu;
@@ -383,68 +375,6 @@ end;
 
 { ---------------------------------------------------------------- input }
 
-function TApp.ReadKey(out k: TKey): Boolean;
-var
-  ev, tk: TKeyEvent;
-  fl: Byte;
-  code: Word;
-  c: Char;
-  sc: Byte;
-  u: string;
-begin
-  Result := False;
-  k.kind := kNone; k.ch := #0; k.n := 0;
-  ev := GetKeyEvent;
-  tk := TranslateKeyEvent(ev);
-  fl := GetKeyEventFlags(tk) and 3;
-  code := GetKeyEventCode(tk);
-  case fl of
-    kbFnKey: begin
-      if (code >= kbdF1) and (code <= kbdF10) then begin k.kind := kF; k.n := code - kbdF1 + 1; end
-      else if code = kbdUp then k.kind := kUp
-      else if code = kbdDown then k.kind := kDown
-      else if code = kbdLeft then k.kind := kLeft
-      else if code = kbdRight then k.kind := kRight
-      else if code = kbdPgUp then k.kind := kPgUp
-      else if code = kbdPgDn then k.kind := kPgDn
-      else if code = kbdHome then k.kind := kHome
-      else if code = kbdEnd then k.kind := kEnd
-      else if code = kbdDelete then k.kind := kDel;
-    end;
-    kbPhys: begin
-      { an untranslated key: Alt+letter arrives as a DOS scancode with no character }
-      sc := (code shr 8) and $FF;
-      c := #0;
-      case sc of
-        $10: c := 'q'; $11: c := 'w'; $12: c := 'e'; $13: c := 'r'; $14: c := 't';
-        $15: c := 'y'; $16: c := 'u'; $17: c := 'i'; $18: c := 'o'; $19: c := 'p';
-        $1E: c := 'a'; $1F: c := 's'; $20: c := 'd'; $21: c := 'f'; $22: c := 'g';
-        $23: c := 'h'; $24: c := 'j'; $25: c := 'k'; $26: c := 'l';
-        $2C: c := 'z'; $2D: c := 'x'; $2E: c := 'c'; $2F: c := 'v'; $30: c := 'b';
-        $31: c := 'n'; $32: c := 'm';
-      end;
-      if c <> #0 then begin k.kind := kAlt; k.ch := c; end;
-    end;
-  else
-    if fl = kbUniCode then begin
-      u := CpToUtf8(GetKeyEventUniCode(tk));
-      if Length(u) = 1 then begin k.kind := kChar; k.ch := u[1]; end
-      else if u <> '' then begin k.kind := kChar; k.ch := u[1]; k.n := 1; end;   { n=1: not plain ASCII }
-    end else begin
-      c := GetKeyEventChar(tk);
-      case Ord(c) of
-        13: k.kind := kEnter;
-        27: k.kind := kEsc;
-        8, 127: k.kind := kBack;
-        9: k.kind := kTab;
-        1..7, 10..12, 14..26: begin k.kind := kCtrl; k.ch := Chr(Ord(c) + 96); end;
-        32..126, 128..255: begin k.kind := kChar; k.ch := c; end;
-      end;
-    end;
-  end;
-  Result := k.kind <> kNone;
-end;
-
 procedure TApp.CheckResize;
 {$IFDEF UNIX}
 var
@@ -487,10 +417,7 @@ begin
   lastRefresh := GetTickCount64;
   sw := ScreenWidth; sh := ScreenHeight;
   repeat
-    if PollKeyEvent <> 0 then begin
-      if ReadKey(k) then Exit(True);
-      Continue;
-    end;
+    if KeyRead(k) then Exit(True);
     CheckResize;
     if (sw <> ScreenWidth) or (sh <> ScreenHeight) then Exit(False);
     grew := False;
@@ -530,7 +457,7 @@ begin
   skipped := 0;
   repeat
     { while more keys are already waiting (a paste, or a held-down key) skip the redraw }
-    if (quit = qNone) and (PollKeyEvent <> 0) and (skipped < 60) then
+    if (quit = qNone) and KeyPending and (skipped < 60) then
       Inc(skipped)
     else begin
       skipped := 0;
@@ -553,8 +480,7 @@ begin
         UpdateScreen(True);
       end else begin
         OnKey(k);
-        if not opts.keyAhead then
-          while PollKeyEvent <> 0 do GetKeyEvent;
+        if not opts.keyAhead then KeysFlush;
       end;
     end;
     if shellReq then begin
@@ -568,7 +494,7 @@ procedure TApp.RunShell;
 var
   sh: string;
 begin
-  DoneKeyboard;
+  KeysDone;
   DoneVideo;
   WriteLn('Type EXIT to return to LIST.');
   {$IFDEF WINDOWS}
@@ -583,7 +509,7 @@ begin
   except
   end;
   InitVideo;
-  InitKeyboard;
+  KeysInit;
   ClearScreen;
   UpdateScreen(True);
 end;

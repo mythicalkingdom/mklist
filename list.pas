@@ -5,7 +5,7 @@ program list;
 
 uses
   SysUtils, Classes, {$IFDEF UNIX} BaseUnix, termio, {$ENDIF} {$IFDEF WINDOWS} Windows, {$ENDIF}
-  Video, Keyboard, uOpts, uSpool, uApp;
+  Video, uOpts, uSpool, uKeys, uApp;
 
 const
   VERSION = '0.1.0';
@@ -160,11 +160,11 @@ begin
   end;
 
   InitVideo;
-  InitKeyboard;
+  KeysInit;
   try
     app.Run;
   finally
-    DoneKeyboard;
+    KeysDone;
     DoneVideo;
   end;
   app.Finish;
