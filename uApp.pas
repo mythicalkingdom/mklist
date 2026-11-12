@@ -4,7 +4,7 @@ unit uApp;
 
 interface
 
-uses SysUtils, Classes, Video, Keyboard, {$IFDEF UNIX} BaseUnix, Unix, termio, {$ENDIF}
+uses SysUtils, Classes, RegExpr, Video, Keyboard, {$IFDEF UNIX} BaseUnix, Unix, termio, {$ENDIF}
      uOpts, uCP437, uScreen, uViewer, uSpool;
 
 type
@@ -75,6 +75,8 @@ type
     procedure HistMove(up: Boolean);
     procedure Exec(const s: string);
     procedure NewFind(const text: string; ci: Boolean);
+    procedure NewRegex(const pat: string; ci: Boolean);
+    procedure SetFind(const f: TFind);
     procedure NewBytes(const arg: string);
     procedure DoFind(fwd: Boolean);
     procedure ToggleFollow;
@@ -100,7 +102,7 @@ implementation
 const
   KEYS_HINT = 'Keys: ↑↓→← PgUp PgDn F10=exit F1=Help';
 
-  HELP2: array[0..21] of string = (
+  HELP2: array[0..22] of string = (
     '',
     '                  NAVIGATION AND COMMAND LINE',
     '',
@@ -108,12 +110,13 @@ const
     '  Left/Right         scroll sideways    Space     page down',
     '  Enter or :         open command line  Esc       quit to next file',
     '  Up/Down (on the command line)  recall earlier commands and searches',
-    '  / \ + - # $        open it pre-filled for a find or skip',
+    '  / \ + - # $ r      open it pre-filled for a find, skip or regex search',
     '',
     '  Commands (type on the Command line, then Enter):',
     '    goto N | #N | +N | -N    skip to a line (in hex mode, a row)',
     '    $HEX                     skip to a hex byte offset',
     '    find TEXT | exact TEXT   search any case / exact; next | prev repeat it',
+    '    re PATTERN | rex PAT     regex search, any case / exact (per line, byte-wise)',
     '    bytes 41 42 0D 0A        search for hex bytes',
     '    follow | remember        tail the file / remember the last position',
     '    hex | text | wrap | tabs | ruler | junk | hibit 7|8|*',
@@ -139,7 +142,7 @@ const
     'a-S  Sharing on/off', 'a-T  Tabs on/off', 'a-U  Unmark lines', 'a-V  file select menu',
     'a-W  toggle windows', 'a-X  exit, restore screen', 'a-Y  recall bookmark', 'a-Z  show toggles',
     '', '7/8/*  hi-bit filters', '+/-/#  skip to line #', '$      skip to hex offset',
-    '1      display first file', '', 'f      follow (tail) on/off', 'r      regex search (not in this build)',
+    '1      display first file', '', 'f      follow (tail) on/off', 'r      regex search',
     'Enter  command line');
 
 { ---------------------------------------------------------------- small helpers }
@@ -915,7 +918,7 @@ begin
     '/', '\', '+', '-', '#', '$': StartInput(c);
     ':': StartInput('');
     'f': ToggleFollow;
-    'r': msg := 'Regex search is not available in this build';
+    'r': StartInput('re ');
     '1': if files.Count = 0 then msg := 'No file list' else OpenInActive(0);
     '7': opts.hibit := 1;
     '8': opts.hibit := 0;
@@ -1135,15 +1138,37 @@ begin
   quit := qClear;
 end;
 
-procedure TApp.NewFind(const text: string; ci: Boolean);
+{ Install a new search, releasing a previous regex. }
+procedure TApp.SetFind(const f: TFind);
 var
   i: Integer;
 begin
-  if text <> '' then begin
-    find := MakeFind(text, ci);
-    hasFind := True;
-    for i := 0 to High(wins) do wins[i].lastMatch := -1;
+  if hasFind and (find.re <> nil) then find.re.Free;
+  find := f;
+  hasFind := True;
+  for i := 0 to High(wins) do wins[i].lastMatch := -1;
+end;
+
+procedure TApp.NewFind(const text: string; ci: Boolean);
+begin
+  if text <> '' then SetFind(MakeFind(text, ci));
+  DoFind(True);
+end;
+
+procedure TApp.NewRegex(const pat: string; ci: Boolean);
+var
+  f: TFind;
+begin
+  if pat = '' then begin DoFind(True); Exit; end;
+  try
+    f := MakeRegex(pat, ci);
+  except
+    on E: Exception do begin
+      msg := 'Bad regex: ' + E.Message;
+      Exit;
+    end;
   end;
+  SetFind(f);
   DoFind(True);
 end;
 
@@ -1178,9 +1203,7 @@ begin
     bytes := bytes + Chr(StrToInt('$' + Copy(digits, p, 2)));
     Inc(p, 2);
   end;
-  find := MakeFind(bytes, False);
-  hasFind := True;
-  for i := 0 to High(wins) do wins[i].lastMatch := -1;
+  SetFind(MakeFind(bytes, False));
   DoFind(True);
 end;
 
@@ -1199,6 +1222,7 @@ var
   v: TViewer;
   top, bot, from, start, p: Int64;
   hadLast, wrapped, hit: Boolean;
+  mlen: Integer;
 begin
   if not hasFind then begin
     msg := 'No search text - use / or \ to search';
@@ -1215,15 +1239,15 @@ begin
   if fwd then begin
     start := from;
     if hadLast then Inc(start);
-    hit := v.Search(find, start, True, p);
-    if not hit then begin wrapped := True; hit := v.Search(find, 0, True, p); end;
+    hit := v.Search(find, start, True, p, mlen);
+    if not hit then begin wrapped := True; hit := v.Search(find, 0, True, p, mlen); end;
   end else begin
-    hit := v.Search(find, from, False, p);
-    if not hit then begin wrapped := True; hit := v.Search(find, v.fileLen, False, p); end;
+    hit := v.Search(find, from, False, p, mlen);
+    if not hit then begin wrapped := True; hit := v.Search(find, v.fileLen, False, p, mlen); end;
   end;
   if hit then begin
     v.lastMatch := p;
-    v.lastLen := Length(find.needle);
+    v.lastLen := mlen;
     v.Reveal(p, opts);
     if wrapped then msg := '*** Search wrapped ***' else msg := '';
   end else
@@ -1407,7 +1431,8 @@ begin
   if (cmd = 'goto') or (cmd = 'go') or (cmd = 'g') or (cmd = 'line') or (cmd = 'skip') then GotoStr(arg)
   else if (cmd = 'find') or (cmd = 'f') then NewFind(arg, True)
   else if (cmd = 'exact') or (cmd = 'fe') then NewFind(arg, False)
-  else if (cmd = 're') or (cmd = 'regex') or (cmd = 'rex') then msg := 'Regex search is not available in this build'
+  else if (cmd = 're') or (cmd = 'regex') then NewRegex(arg, True)
+  else if cmd = 'rex' then NewRegex(arg, False)
   else if (cmd = 'bytes') or (cmd = 'hexfind') or (cmd = 'xfind') then NewBytes(arg)
   else if (cmd = 'follow') or (cmd = 'tail') then ToggleFollow
   else if cmd = 'remember' then begin

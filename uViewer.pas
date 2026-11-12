@@ -7,7 +7,7 @@ unit uViewer;
 
 interface
 
-uses SysUtils, uOpts, uCP437, uScreen;
+uses SysUtils, RegExpr, uOpts, uCP437, uScreen;
 
 const
   MIN_LIMIT = 64 * 1024;
@@ -17,8 +17,9 @@ const
 type
   TByteArr = array of Byte;
   TFind = record
-    needle: string;        { raw bytes; lower-cased when ci }
+    needle: string;        { raw bytes (lower-cased when ci); for a regex, the pattern }
     ci: Boolean;
+    re: TRegExpr;          { non-nil for a regex search; owned by whoever created the TFind }
   end;
   PFind = ^TFind;
   TCl = record ch: Byte; src: Int64; end;
@@ -60,7 +61,7 @@ type
     function CurTopOff: Int64;
     procedure SetLimit(ALimit: Int64);
     procedure Recenter(abs: Int64);
-    function Search(const f: TFind; from: Int64; fwd: Boolean; out mpos: Int64): Boolean;
+    function Search(const f: TFind; from: Int64; fwd: Boolean; out mpos: Int64; out mlen: Integer): Boolean;
     function NLines: Integer;
     procedure Down(n: Integer; const o: TOpts);
     procedure Up(n: Integer; const o: TOpts);
@@ -105,8 +106,12 @@ type
   end;
 
 function MakeFind(const text: string; ci: Boolean): TFind;
-function FindFwd(const d: TByteArr; const f: TFind; from: Int64): Int64;
-function FindBack(const d: TByteArr; const f: TFind; before: Int64): Int64;
+{ Compile a regular expression (matched byte-wise, line by line); raises ERegExpr if it is bad. }
+function MakeRegex(const pat: string; ci: Boolean): TFind;
+{ First match starting at or after `from`; returns its start (or -1) and length. }
+function FindFwd(const d: TByteArr; const f: TFind; from: Int64; out mlen: Integer): Int64;
+{ Last match starting strictly before `before`. }
+function FindBack(const d: TByteArr; const f: TFind; before: Int64; out mlen: Integer): Int64;
 
 implementation
 
@@ -139,18 +144,92 @@ var
 begin
   Result.needle := text;
   Result.ci := ci;
+  Result.re := nil;
   if ci then
     for i := 1 to Length(text) do
       if (text[i] >= 'A') and (text[i] <= 'Z') then Result.needle[i] := Chr(Ord(text[i]) + 32);
 end;
 
-function FindFwd(const d: TByteArr; const f: TFind; from: Int64): Int64;
+function MakeRegex(const pat: string; ci: Boolean): TFind;
+begin
+  Result.needle := pat;
+  Result.ci := ci;
+  Result.re := TRegExpr.Create;
+  try
+    Result.re.ModifierI := ci;
+    Result.re.ModifierS := False;     { . does not match a newline }
+    Result.re.ModifierM := True;      { ^ and $ match at line boundaries }
+    Result.re.Expression := pat;
+    Result.re.Compile;
+  except
+    Result.re.Free;
+    Result.re := nil;
+    raise;
+  end;
+end;
+
+function BytesToStr(const d: TByteArr; a, b: Int64): RawByteString;
+begin
+  SetLength(Result, b - a);
+  if b > a then Move(d[a], Result[1], b - a);
+end;
+
+function ReFwd(const d: TByteArr; const f: TFind; from: Int64; out mlen: Integer): Int64;
+var
+  s: RawByteString;
+  p: Integer;
+begin
+  Result := -1;
+  mlen := 0;
+  if from < 0 then from := 0;
+  if from >= Length(d) then Exit;
+  s := BytesToStr(d, 0, Length(d));
+  f.re.InputString := s;
+  p := from + 1;
+  while p <= Length(s) do begin
+    if not f.re.ExecPos(p) then Exit;
+    if f.re.MatchLen[0] > 0 then begin
+      mlen := f.re.MatchLen[0];
+      Exit(f.re.MatchPos[0] - 1);
+    end;
+    p := f.re.MatchPos[0] + 1;
+  end;
+end;
+
+function ReBack(const d: TByteArr; const f: TFind; before: Int64; out mlen: Integer): Int64;
+var
+  s: RawByteString;
+  p, ms, ml: Integer;
+begin
+  Result := -1;
+  mlen := 0;
+  if (before <= 0) or (Length(d) = 0) then Exit;
+  s := BytesToStr(d, 0, Length(d));
+  f.re.InputString := s;
+  p := 1;
+  while p <= Length(s) do begin
+    if not f.re.ExecPos(p) then Break;
+    ms := f.re.MatchPos[0] - 1;
+    ml := f.re.MatchLen[0];
+    if ms >= before then Break;
+    if ml > 0 then begin
+      Result := ms;
+      mlen := ml;
+      p := ms + ml + 1;      { matches do not overlap }
+    end else
+      p := ms + 2;
+  end;
+end;
+
+function FindFwd(const d: TByteArr; const f: TFind; from: Int64; out mlen: Integer): Int64;
 var
   n, len, lastStart, i, j: Int64;
   n0, c: Byte;
   ok: Boolean;
 begin
   Result := -1;
+  mlen := Length(f.needle);
+  if f.re <> nil then Exit(ReFwd(d, f, from, mlen));
   n := Length(f.needle);
   len := Length(d);
   if (n = 0) or (len < n) then Exit;
@@ -175,14 +254,15 @@ begin
   end;
 end;
 
-{ Last match starting strictly before `before`. }
-function FindBack(const d: TByteArr; const f: TFind; before: Int64): Int64;
+function FindBack(const d: TByteArr; const f: TFind; before: Int64; out mlen: Integer): Int64;
 var
   n, len, i, j: Int64;
   n0, c: Byte;
   ok: Boolean;
 begin
   Result := -1;
+  mlen := Length(f.needle);
+  if f.re <> nil then Exit(ReBack(d, f, before, mlen));
   n := Length(f.needle);
   len := Length(d);
   if (n = 0) or (before <= 0) or (len < n) then Exit;
@@ -696,7 +776,7 @@ begin
 end;
 
 { Search the whole file (not just the buffer). Returns the absolute offset of the match. }
-function TViewer.Search(const f: TFind; from: Int64; fwd: Boolean; out mpos: Int64): Boolean;
+function TViewer.Search(const f: TFind; from: Int64; fwd: Boolean; out mpos: Int64; out mlen: Integer): Boolean;
 const
   CH = 1 shl 20;
 var
@@ -706,18 +786,20 @@ var
 begin
   Result := False;
   mpos := -1;
+  mlen := 0;
   if f.needle = '' then Exit;
   if not Windowed then begin
-    if fwd then i := FindFwd(data, f, from) else i := FindBack(data, f, from);
+    if fwd then i := FindFwd(data, f, from, mlen) else i := FindBack(data, f, from, mlen);
     if i >= 0 then begin mpos := i; Result := True; end;
     Exit;
   end;
-  over := Length(f.needle) - 1;
+  { a regex match that straddles a chunk boundary is found if it is shorter than 4 KB }
+  if f.re <> nil then over := 4096 else over := Length(f.needle) - 1;
   if fwd then begin
     pos := from;
     while pos < fileLen do begin
       ReadAt(pos, CH + over, d);
-      i := FindFwd(d, f, 0);
+      i := FindFwd(d, f, 0, mlen);
       if i >= 0 then begin mpos := pos + i; Exit(True); end;
       Inc(pos, CH);
     end;
@@ -730,7 +812,7 @@ begin
       len := endp - st + over;
       if len > fileLen - st then len := fileLen - st;
       ReadAt(st, len, d);
-      i := FindBack(d, f, endp - st);
+      i := FindBack(d, f, endp - st, mlen);
       if i >= 0 then begin mpos := st + i; Exit(True); end;
       endp := st;
     end;
@@ -1073,14 +1155,34 @@ end;
 function TViewer.Matches(const f: TFind; from, till: Int64): TMatchArr;
 var
   p, m: Int64;
-  n: Integer;
+  n, q: Integer;
+  s: RawByteString;
 begin
   SetLength(Result, 0);
+  if f.re <> nil then begin
+    { a regex is applied to one line at a time, so ^ and $ mean the start and end of the line }
+    if till > Length(data) then till := Length(data);
+    if till <= from then Exit;
+    s := BytesToStr(data, from, till);
+    f.re.InputString := s;
+    q := 1;
+    while q <= Length(s) do begin
+      if not f.re.ExecPos(q) then Break;
+      if f.re.MatchLen[0] > 0 then begin
+        SetLength(Result, Length(Result) + 1);
+        Result[High(Result)].start := from + f.re.MatchPos[0] - 1;
+        Result[High(Result)].len := f.re.MatchLen[0];
+        q := f.re.MatchPos[0] + f.re.MatchLen[0];
+      end else
+        q := f.re.MatchPos[0] + 1;
+    end;
+    Exit;
+  end;
   n := Length(f.needle);
   p := from - (n - 1);
   if p < 0 then p := 0;
   repeat
-    m := FindFwd(data, f, p);
+    m := FindFwd(data, f, p, n);
     if (m < 0) or (m >= till) then Break;
     SetLength(Result, Length(Result) + 1);
     Result[High(Result)].start := m;
@@ -1223,7 +1325,15 @@ begin
   for r := top to e - 1 do begin
     y := y0 + r - top;
     off := Int64(r) * 16;
-    if f <> nil then ms := Matches(f^, off, off + 16) else SetLength(ms, 0);
+    if (f <> nil) and (f^.re <> nil) then begin
+      { a regex can't be matched row by row, so only the last hit is highlighted }
+      SetLength(ms, 0);
+      if (lastMatch >= 0) and (lastMatch + lastLen > base + off) and (lastMatch < base + off + 16) then begin
+        SetLength(ms, 1);
+        ms[0].start := lastMatch - base;
+        ms[0].len := lastLen;
+      end;
+    end else if f <> nil then ms := Matches(f^, off, off + 16) else SetLength(ms, 0);
     absOff := base + off;
     if fileLen > $FFFFFF then lab := IntToHex(absOff, 8) else lab := IntToHex(absOff, 6);
     ScrPuts(0, y, lab, o.textFg, o.textBg);

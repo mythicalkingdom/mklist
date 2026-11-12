@@ -2,8 +2,7 @@
 
 A Free Pascal port of the Rust `list` text-mode file browser (itself modelled on Vernon Buerg's DOS
 LIST): same keys, text and hex modes, status lines top and bottom, memory-windowed reading of big
-files, stdin as a pager, follow/tail, command history, remembered positions, bytes search.
-**Regex search is not included** (`r` / `re` just say so).
+files, stdin as a pager, follow/tail, command history, remembered positions, bytes search, and regex search.
 
     make            # needs fpc 3.2+; produces ./list (about 400 KB)
     ./list [-x] [-m SIZE] [- | file | wildcard | directory]...
@@ -12,6 +11,14 @@ files, stdin as a pager, follow/tail, command history, remembered positions, byt
 Press F1 for the key list; the README of the Rust version describes the commands. The configuration
 (`list.cfg`, `history.txt`, `positions.txt`) lives in the same folder as the Rust version
 (`~/.config/list/`, `%APPDATA%\list\` on Windows), so the two share settings.
+
+## Regex search
+
+`r` or `re PATTERN` (any case) / `rex PATTERN` (exact case), using FPC's `RegExpr` (TRegExpr): Perl-like syntax
+with `\d \w \s`, classes, groups, `|`, `{n,m}`, lazy quantifiers. Matching is byte-wise and per line (`^`/`$` are
+line anchors, `.` does not cross a newline), non-overlapping, and highlighted on screen. Case-insensitive matching
+is ASCII only, and `.` matches one byte, so it takes two to match an accented letter. In hex mode only the last hit
+is highlighted, and in windowed (big) files a match longer than 4 KB that straddles a 1 MB chunk boundary can be missed.
 
 ## How it differs from the Rust version
 
