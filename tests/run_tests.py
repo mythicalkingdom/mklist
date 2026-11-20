@@ -573,6 +573,53 @@ def cat_mode_and_options(env):
     expect(r.returncode != 0, "bad --mem size is an error")
 
 
+# ---------------------------------------------------------------- ANSI / overstrike formatting
+def cell(s, y, x):
+    return s.screen.buffer[y][x]
+
+
+@test
+def ansi_sequences_are_interpreted(env):
+    env.write("a.txt", "plain \x1b[1mbold\x1b[0m \x1b[4mul\x1b[24m \x1b[31mred\x1b[0m \x1b[7mrv\x1b[0m "
+              "\x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\ \x1b[38;5;82mgn\x1b[0m\x1b[2K\n")
+    s = env.start("a.txt")
+    s.pump()
+    line = s.row(1)
+    eq(line, "plain bold ul red rv link gn", "escape sequences are not displayed")
+    base = cell(s, 1, 0)
+    bold, ul, red, rv, gn = cell(s, 1, 6), cell(s, 1, 11), cell(s, 1, 14), cell(s, 1, 18), cell(s, 1, 26)
+    expect(bold.fg != base.fg, "bold looks different")
+    expect(ul.fg != base.fg and ul.fg != bold.fg, "underline looks different from bold")
+    eq(red.fg, "red", "red")
+    eq(rv.fg, base.bg, "reverse swaps colours")
+    eq(gn.fg, "brightgreen", "256-colour mapped to the 16-colour palette")
+    eq(cell(s, 1, 5).fg, base.fg, "reset ends the style")
+
+
+@test
+def ansi_toggle(env):
+    env.write("a.txt", "x \x1b[1mbold\x1b[0m\n")
+    s = env.start("a.txt")
+    s.pump()
+    eq(s.row(1), "x bold")
+    s.send(alt("q"))
+    expect("[1mbold" in s.row(1), "raw escapes shown: " + s.row(1))
+    s.send(alt("q"))
+    eq(s.row(1), "x bold")
+
+
+@test
+def backspace_overstrike(env):
+    env.write("m.txt", "N\bNA\bAM\bME\bE  _\bu_\bn_\bd x\n")
+    s = env.start("m.txt")
+    s.pump()
+    eq(s.row(1), "NAME  und x")
+    base = cell(s, 1, 10)
+    expect(cell(s, 1, 0).fg != base.fg, "doubled characters are bold")
+    expect(cell(s, 1, 6).fg != base.fg, "_ backspace char is underlined")
+    eq(cell(s, 1, 10).fg, base.fg, "plain text unaffected")
+
+
 # ---------------------------------------------------------------- runner
 def main(argv):
     pattern = None

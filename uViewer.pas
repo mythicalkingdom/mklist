@@ -22,7 +22,8 @@ type
     re: TRegExpr;          { non-nil for a regex search; owned by whoever created the TFind }
   end;
   PFind = ^TFind;
-  TCl = record ch: Byte; src: Int64; end;
+  { fl: style bits (SF_*); fg/bg: VGA colour 0..15, or -1 for the normal text colour }
+  TCl = record ch: Byte; src: Int64; fl: Byte; fg, bg: ShortInt; end;
   TCellList = record a: array of TCl; n: Integer; end;
   TMatch = record start: Int64; len: Integer; end;
   TMatchArr = array of TMatch;
@@ -285,11 +286,24 @@ begin
   end;
 end;
 
+const
+  SF_BOLD = 1; SF_UL = 2; SF_REV = 4;
+  { the text screen has no bold or underline, so they are shown as colours }
+  BOLD_FG = 14; UL_FG = 11; BOLDUL_FG = 10;
+
+var
+  curFl: Byte = 0;            { the style in force while LineCells builds a line }
+  curFg: ShortInt = -1;
+  curBg: ShortInt = -1;
+
 procedure AddCell(var cl: TCellList; ch: Byte; src: Int64);
 begin
   if cl.n >= Length(cl.a) then SetLength(cl.a, Length(cl.a) * 2 + 64);
   cl.a[cl.n].ch := ch;
   cl.a[cl.n].src := src;
+  cl.a[cl.n].fl := curFl;
+  cl.a[cl.n].fg := curFg;
+  cl.a[cl.n].bg := curBg;
   Inc(cl.n);
 end;
 
@@ -320,6 +334,133 @@ begin
   if IsZeroWidth(cp) then Exit;
   m := UniToCp437(cp);
   if m < 0 then AddCell(cl, 63, src) else AddCell(cl, m, src);
+end;
+
+
+{ ANSI colour number 0..7 (bit0 red, bit1 green, bit2 blue) -> VGA colour (bit0 blue, bit2 red) }
+function AnsiToVga(n: Integer): Integer;
+begin
+  Result := ((n and 1) shl 2) or (n and 2) or ((n and 4) shr 2);
+end;
+
+function Rgb16(r, g, b: Integer): Integer;
+var
+  m: Integer;
+begin
+  m := r;
+  if g > m then m := g;
+  if b > m then m := b;
+  if m < 48 then Exit(0);
+  Result := 0;
+  if r * 2 >= m then Result := Result or 4;
+  if g * 2 >= m then Result := Result or 2;
+  if b * 2 >= m then Result := Result or 1;
+  if (Result = 7) and (m < 160) then Result := 8
+  else if (m >= 200) and (Result <> 7) then Result := Result or 8
+  else if Result = 7 then Result := 7;
+  if (Result = 7) and (m >= 230) then Result := 15;
+end;
+
+function Color256(n: Integer): Integer;
+var
+  r, g, b, v: Integer;
+begin
+  if n < 8 then Exit(AnsiToVga(n));
+  if n < 16 then Exit(AnsiToVga(n - 8) + 8);
+  if n >= 232 then begin
+    v := (n - 232) * 10 + 8;
+    Exit(Rgb16(v, v, v));
+  end;
+  n := n - 16;
+  b := n mod 6; g := (n div 6) mod 6; r := n div 36;
+  Result := Rgb16(r * 51, g * 51, b * 51);
+end;
+
+procedure ApplySgr(const params: array of Integer; np: Integer);
+var
+  i, c: Integer;
+begin
+  if np = 0 then begin curFl := 0; curFg := -1; curBg := -1; Exit; end;
+  i := 0;
+  while i < np do begin
+    c := params[i];
+    case c of
+      0: begin curFl := 0; curFg := -1; curBg := -1; end;
+      1: curFl := curFl or SF_BOLD;
+      3, 4: curFl := curFl or SF_UL;
+      7: curFl := curFl or SF_REV;
+      22: curFl := curFl and not SF_BOLD;
+      23, 24: curFl := curFl and not SF_UL;
+      27: curFl := curFl and not SF_REV;
+      30..37: curFg := AnsiToVga(c - 30);
+      39: curFg := -1;
+      40..47: curBg := AnsiToVga(c - 40);
+      49: curBg := -1;
+      90..97: curFg := AnsiToVga(c - 90) + 8;
+      100..107: curBg := AnsiToVga(c - 100);
+      38, 48: begin
+        if (i + 2 < np) and (params[i + 1] = 5) then begin
+          if c = 38 then curFg := Color256(params[i + 2]) else curBg := Color256(params[i + 2]) and 7;
+          Inc(i, 2);
+        end else if (i + 4 < np) and (params[i + 1] = 2) then begin
+          if c = 38 then curFg := Rgb16(params[i + 2], params[i + 3], params[i + 4])
+          else curBg := Rgb16(params[i + 2], params[i + 3], params[i + 4]) and 7;
+          Inc(i, 4);
+        end;
+      end;
+    end;
+    Inc(i);
+  end;
+end;
+
+{ p points at an ESC. Interprets (SGR) or skips the escape sequence and returns its length. }
+function EscSeq(const d: TByteArr; p, e: Int64): Integer;
+var
+  q: Int64;
+  params: array[0..15] of Integer;
+  np, v: Integer;
+  have: Boolean;
+begin
+  Result := 1;
+  if p + 1 >= e then Exit;
+  case d[p + 1] of
+    Ord('['): begin
+      q := p + 2;
+      np := 0; v := 0; have := False;
+      while (q < e) and (d[q] >= $30) and (d[q] <= $3F) do begin
+        if (d[q] >= 48) and (d[q] <= 57) then begin
+          if v < 100000 then v := v * 10 + d[q] - 48;
+          have := True;
+        end else if d[q] = Ord(';') then begin
+          if np < 16 then begin params[np] := v; Inc(np); end;
+          v := 0; have := False;
+        end;
+        Inc(q);
+      end;
+      if have or (np > 0) then if np < 16 then begin params[np] := v; Inc(np); end;
+      while (q < e) and (d[q] >= $20) and (d[q] <= $2F) do Inc(q);
+      if q >= e then Exit(Integer(q - p));       { truncated: swallow what there is }
+      if (d[q] >= $40) and (d[q] <= $7E) then begin
+        if d[q] = Ord('m') then ApplySgr(params, np);
+        Exit(Integer(q - p + 1));
+      end;
+      Result := Integer(q - p);
+    end;
+    Ord(']'), Ord('P'), Ord('_'), Ord('^'): begin    { OSC (e.g. hyperlinks), DCS...: up to BEL or ST }
+      q := p + 2;
+      while q < e do begin
+        if d[q] = 7 then Exit(Integer(q - p + 1));
+        if (d[q] = 27) and (q + 1 < e) and (d[q + 1] = Ord('\')) then Exit(Integer(q - p + 2));
+        Inc(q);
+      end;
+      Result := Integer(e - p);
+    end;
+    $20..$2F: begin                                  { ESC ( B and friends }
+      Result := 3;
+      if p + Result > e then Result := Integer(e - p);
+    end;
+    else Result := 2;
+  end;
 end;
 
 { ---------------------------------------------------------------- construction / loading }
@@ -852,16 +993,64 @@ procedure TViewer.LineCells(i: Integer; const o: TOpts; var cl: TCellList);
 var
   s, e, p: Int64;
   b: Byte;
-  k: Integer;
-  cp: Cardinal;
+  k, k2, n0: Integer;
+  cp, cp2: Cardinal;
   useUtf8: Boolean;
+  prev: TCl;
+  pc: Byte;
+  nc: Cardinal;
+
+  { decode the character at q (cp, size) without emitting it }
+  function Peek(q: Int64; out c: Cardinal): Integer;
+  begin
+    if useUtf8 and (data[q] >= $C2) then begin
+      Result := Utf8Decode(@data[q], e - q, c);
+      if Result > 0 then Exit;
+    end;
+    c := data[q];
+    Result := 1;
+  end;
+
 begin
   cl.n := 0;
+  curFl := 0; curFg := -1; curBg := -1;
   LineContent(i, s, e);
   useUtf8 := utf8 and (o.hibit = 0);
   p := s;
   while p < e do begin
     b := data[p];
+    if (b = 27) and o.ansi then begin                       { ANSI colour / attribute sequences }
+      Inc(p, EscSeq(data, p, e));
+      Continue;
+    end;
+    if o.ansi and (b = 8) and (cl.n > 0) and (p + 1 < e) then begin
+      { backspace overstrike, as written by nroff/man: X BS X is bold, _ BS X is underline }
+      k2 := Peek(p + 1, nc);
+      if (nc >= 32) and (nc <> 127) then begin
+        prev := cl.a[cl.n - 1];
+        pc := prev.ch;
+        if (nc < 128) and (pc = Byte(nc)) then begin
+          cl.a[cl.n - 1].fl := prev.fl or SF_BOLD;
+          Inc(p, 1 + k2);
+          Continue;
+        end else if pc = Ord('_') then begin
+          Dec(cl.n);
+          n0 := cl.n;
+          if nc < 128 then EmitByte(cl, Byte(nc), p + 1, o) else EmitCp(cl, nc, p + 1, o);
+          if cl.n = n0 + 1 then begin
+            cl.a[n0].fl := cl.a[n0].fl or SF_UL;
+            Inc(p, 1 + k2);
+            Continue;
+          end;
+          cl.n := n0 + 1;                       { could not merge; keep the underscore }
+          cl.a[n0] := prev;
+        end else if nc = Ord('_') then begin
+          cl.a[cl.n - 1].fl := prev.fl or SF_UL;
+          Inc(p, 1 + k2);
+          Continue;
+        end;
+      end;
+    end;
     if useUtf8 and (b >= $C2) then begin
       k := Utf8Decode(@data[p], e - p, cp);
       if k > 0 then begin
@@ -875,6 +1064,7 @@ begin
     EmitByte(cl, b, p, o);
     Inc(p);
   end;
+  curFl := 0; curFg := -1; curBg := -1;
 end;
 
 function TViewer.RowsOf(i: Integer; const o: TOpts): Integer;
@@ -1253,6 +1443,26 @@ begin
 end;
 
 procedure TViewer.RenderText(y0, w: Integer; const o: TOpts; f: PFind);
+
+  { colours for a cell that carries bold / underline / reverse or explicit colours }
+  procedure StyleColors(const c: TCl; var fg, bg: Byte);
+  var
+    t: Byte;
+  begin
+    if c.fg >= 0 then fg := c.fg;
+    if c.bg >= 0 then bg := c.bg;
+    if (c.fl and (SF_BOLD or SF_UL)) <> 0 then begin
+      if c.fg >= 0 then begin
+        if (c.fl and SF_BOLD) <> 0 then fg := fg or 8;
+      end else if (c.fl and SF_BOLD) = 0 then fg := UL_FG
+      else if (c.fl and SF_UL) = 0 then fg := BOLD_FG
+      else fg := BOLDUL_FG;
+    end;
+    if (c.fl and SF_REV) <> 0 then begin
+      t := fg and 7; fg := bg; bg := t;
+    end;
+  end;
+
 var
   n, line, sub0, row, lastLine, nrows, from, x, y, i: Integer;
   cl: TCellList;
@@ -1287,7 +1497,10 @@ begin
         hl := False;
         for i := 0 to High(ms) do
           if (c.src >= ms[i].start) and (c.src < ms[i].start + ms[i].len) then begin hl := True; Break; end;
-        if hl then begin fg := o.findFg; bg := o.findBg; end else begin fg := tf; bg := tb; end;
+        if hl then begin fg := o.findFg; bg := o.findBg; end else begin
+          fg := tf; bg := tb;
+          if (c.fl <> 0) or (c.fg >= 0) or (c.bg >= 0) then StyleColors(c, fg, bg);
+        end;
         ScrPut(x, y, c.ch, fg, bg);
       end;
       Inc(row);

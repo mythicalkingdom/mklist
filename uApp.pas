@@ -111,7 +111,7 @@ const
     '    re PATTERN | rex PAT     regex search, any case / exact (per line, byte-wise)',
     '    bytes 41 42 0D 0A        search for hex bytes',
     '    follow | remember        tail the file / remember the last position',
-    '    hex | text | wrap | tabs | ruler | junk | hibit 7|8|*',
+    '    hex | text | wrap | tabs | ruler | junk | ansi | hibit 7|8|*',
     '    open SPEC | insert SPEC | files | nextfile | firstfile',
     '    copy FILE | append FILE | print | mark top|bottom|clear | recall',
     '    windows | save | toggles | dos | help | quit | exit',
@@ -603,7 +603,7 @@ begin
     2: hb := '* (filter)';
   else hb := '8 (all)';
   end;
-  SetLength(lines, 14);
+  SetLength(lines, 15);
   lines[0] := 'Hex mode ........ ' + OnOff(v.hex) + '   (Alt-H)';
   lines[1] := 'Wrap long lines . ' + OnOff(opts.wrap) + '   (W)';
   lines[2] := 'Tabs ............ ' + OnOff(opts.tabs) + '   (Alt-T)';
@@ -618,6 +618,7 @@ begin
   lines[11] := 'Max memory ..... ' + FmtSize(opts.maxMem) + '   (mem SIZE)';
   lines[12] := 'Follow (tail) ... ' + OnOff(v.follow) + '   (f)';
   lines[13] := 'Remember pos .... ' + OnOff(opts.remember) + '   (remember)';
+  lines[14] := 'ANSI/man codes .. ' + OnOff(opts.ansi) + '   (Alt-Q)';
   w := 50;
   h := Length(lines) + 2;
   if (ScreenWidth < w) or (ScreenHeight < h + 1) then Exit;
@@ -889,6 +890,10 @@ begin
     end;
     'o': StartInput('append ');
     'p': PrintMarked;
+    'q': begin
+           opts.ansi := not opts.ansi;
+           if opts.ansi then msg := 'ANSI colour / man overstrike codes interpreted' else msg := 'ANSI codes shown raw';
+         end;
     'r': opts.ruler := not opts.ruler;
     's': opts.sharing := not opts.sharing;
     't': opts.tabs := not opts.tabs;
@@ -1373,6 +1378,7 @@ begin
   else if cmd = 'tabs' then opts.tabs := not opts.tabs
   else if cmd = 'ruler' then opts.ruler := not opts.ruler
   else if cmd = 'junk' then opts.junk := not opts.junk
+  else if cmd = 'ansi' then AltKey('q')
   else if cmd = 'hibit' then begin
     if arg = '7' then opts.hibit := 1 else if arg = '*' then opts.hibit := 2 else opts.hibit := 0;
   end
