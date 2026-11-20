@@ -11,7 +11,7 @@ const
 
 type
   TOpts = record
-    wrap, tabs, ruler, junk, ansi: Boolean;
+    wrap, tabs, ruler, junk, ansi, md: Boolean;
     hibit: Integer;                       { 0 = show all (8), 1 = strip high bit (7), 2 = filter (*) }
     keyAhead, preload, saver, sharing, printer: Boolean;
     textFg, textBg, statFg, statBg, findFg, findBg: Byte;
@@ -30,7 +30,7 @@ implementation
 
 procedure OptsDefault(var o: TOpts);
 begin
-  o.wrap := False; o.tabs := True; o.ruler := False; o.junk := False; o.ansi := True; o.hibit := 0;
+  o.wrap := False; o.tabs := True; o.ruler := False; o.junk := False; o.ansi := True; o.md := True; o.hibit := 0;
   o.keyAhead := True; o.preload := True; o.saver := False; o.sharing := True; o.printer := False;
   o.textFg := 15; o.textBg := 1; o.statFg := 0; o.statBg := 3; o.findFg := 0; o.findBg := 6;
   o.maxMem := 1 shl 20;
@@ -87,6 +87,7 @@ begin
       else if k = 'ruler' then o.ruler := b
       else if k = 'junk' then o.junk := b
       else if k = 'ansi' then o.ansi := b
+      else if k = 'md' then o.md := b
       else if k = 'hibit' then begin if n > 2 then n := 2; if n < 0 then n := 0; o.hibit := n end
       else if k = 'key_ahead' then o.keyAhead := b
       else if k = 'preload' then o.preload := b
@@ -126,7 +127,7 @@ begin
   sl := TStringList.Create;
   try
     sl.Add('wrap=' + B(o.wrap)); sl.Add('tabs=' + B(o.tabs)); sl.Add('ruler=' + B(o.ruler));
-    sl.Add('junk=' + B(o.junk)); sl.Add('ansi=' + B(o.ansi)); sl.Add('hibit=' + IntToStr(o.hibit));
+    sl.Add('junk=' + B(o.junk)); sl.Add('ansi=' + B(o.ansi)); sl.Add('md=' + B(o.md)); sl.Add('hibit=' + IntToStr(o.hibit));
     sl.Add('key_ahead=' + B(o.keyAhead)); sl.Add('preload=' + B(o.preload));
     sl.Add('saver=' + B(o.saver)); sl.Add('sharing=' + B(o.sharing)); sl.Add('printer=' + B(o.printer));
     sl.Add('text_fg=' + IntToStr(o.textFg)); sl.Add('text_bg=' + IntToStr(o.textBg));

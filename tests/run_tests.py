@@ -609,6 +609,32 @@ def ansi_toggle(env):
 
 
 @test
+def markdown_rendering(env):
+    src = ("# Title\n- item **bold** and *it*\n1. `code` [site](http://x.y) \\*lit\\*\n> quote\n"
+           "snake_case_name 2 * 3 * 4\n---\n")
+    env.write("d.md", src)
+    env.write("d.txt", src)
+    s = env.start("d.md")
+    s.pump()
+    eq(s.row(1), "Title")
+    eq(s.row(2), "\u2022 item bold and it")
+    eq(s.row(3), "1. code site *lit*")
+    eq(s.row(4), "quote")
+    eq(s.row(5), "snake_case_name 2 * 3 * 4", "no false emphasis")
+    expect(set(s.row(6)) == {"\u2500"}, "rule drawn: " + s.row(6))
+    base = cell(s, 5, 0)
+    expect(cell(s, 1, 0).fg != base.fg, "heading coloured")
+    expect(cell(s, 2, 7).fg not in (base.fg,), "bold coloured")
+    expect(cell(s, 3, 3).bg != base.bg, "code has its own background")
+    s.send(":md\r")
+    expect(s.row(1) == "# Title", "raw when off: " + s.row(1))
+    s.close()
+    s = env.start("d.txt")
+    s.pump()
+    eq(s.row(1), "# Title", "only .md files are formatted")
+
+
+@test
 def backspace_overstrike(env):
     env.write("m.txt", "N\bNA\bAM\bME\bE  _\bu_\bn_\bd x\n")
     s = env.start("m.txt")

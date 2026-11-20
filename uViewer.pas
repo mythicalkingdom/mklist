@@ -35,6 +35,7 @@ type
     data: TByteArr;
     starts: array of Cardinal;
     utf8: Boolean;
+    isMd: Boolean;         { the file name says Markdown }
     base, lineBase, fileLen, limit: Int64;
     lbValid: Boolean;
     anchors: array of TAnchor;
@@ -463,6 +464,208 @@ begin
   end;
 end;
 
+
+{ ---------------------------------------------------------------- Markdown (single-line constructs only)
+  Works on the cells of one line after they are built: markers are removed and the text restyled.
+  Multi-line constructs (fenced blocks, tables, setext headings) are not recognised. }
+
+const
+  MD_BOLD = 1; MD_ITAL = 2; MD_CODE = 4; MD_LINK = 8;
+  MD_HEAD_FG = 14; MD_QUOTE_FG = 7; MD_BULLET_FG = 14;
+  MD_BOLD_FG = 10; MD_ITAL_FG = 13; MD_BOTH_FG = 12; MD_LINK_FG = 11;
+  MD_CODE_FG = 0; MD_CODE_BG = 7;
+
+function MdPunct(c: Byte): Boolean;
+begin
+  Result := ((c >= 33) and (c <= 47)) or ((c >= 58) and (c <= 64)) or ((c >= 91) and (c <= 96)) or ((c >= 123) and (c <= 126));
+end;
+
+function MdAlnum(c: Byte): Boolean;
+begin
+  Result := ((c >= 48) and (c <= 57)) or ((c >= 65) and (c <= 90)) or ((c >= 97) and (c <= 122)) or (c >= 128);
+end;
+
+procedure MdPass(var cl: TCellList; vw: Integer);
+var
+  n, i, j, k, m, r, ind, hn, outN: Integer;
+  kill: array of Boolean;
+  mf: array of Byte;
+  code: Boolean;
+  c: Byte;
+  baseFg: Integer;
+  nl: array of TCl;
+
+  function Ch(x: Integer): Byte;
+  begin
+    if (x < 0) or (x >= n) then Result := 0 else Result := cl.a[x].ch;
+  end;
+
+  procedure MarkRange(a, b: Integer; bits: Byte);
+  var x: Integer;
+  begin
+    for x := a to b do mf[x] := mf[x] or bits;
+  end;
+
+begin
+  n := cl.n;
+  if (n = 0) or (n > 2000) then Exit;
+  SetLength(kill, n);
+  SetLength(mf, n);
+  for i := 0 to n - 1 do begin kill[i] := False; mf[i] := 0; end;
+  baseFg := -1;
+  ind := 0;
+  while (ind < n) and (cl.a[ind].ch = 32) do Inc(ind);
+  if ind >= n then Exit;
+
+  { horizontal rule: 3+ of - * _ (spaces allowed) and nothing else }
+  c := cl.a[ind].ch;
+  if (c = Ord('-')) or (c = Ord('*')) or (c = Ord('_')) then begin
+    k := 0; j := ind;
+    while (j < n) and ((cl.a[j].ch = c) or (cl.a[j].ch = 32)) do begin
+      if cl.a[j].ch = c then Inc(k);
+      Inc(j);
+    end;
+    if (j >= n) and (k >= 3) then begin
+      m := vw;
+      if m < 3 then m := 3;
+      SetLength(nl, m);
+      for i := 0 to m - 1 do begin
+        nl[i] := cl.a[0];
+        nl[i].ch := $C4; nl[i].fl := 0; nl[i].fg := MD_QUOTE_FG; nl[i].bg := -1;
+      end;
+      if Length(cl.a) < m then SetLength(cl.a, m);
+      for i := 0 to m - 1 do cl.a[i] := nl[i];
+      cl.n := m;
+      Exit;
+    end;
+  end;
+
+  { fence line: shown as code, not parsed further }
+  if (ind + 2 < n) and (((c = Ord('`')) and (Ch(ind + 1) = c) and (Ch(ind + 2) = c)) or
+     ((c = Ord('~')) and (Ch(ind + 1) = c) and (Ch(ind + 2) = c))) then begin
+    for i := 0 to n - 1 do begin cl.a[i].fl := 0; cl.a[i].fg := MD_CODE_FG; cl.a[i].bg := MD_CODE_BG; end;
+    Exit;
+  end;
+
+  { block prefixes }
+  i := ind;
+  if (c = Ord('#')) and (ind <= 3) then begin
+    hn := 0; j := ind;
+    while (j < n) and (cl.a[j].ch = Ord('#')) do begin Inc(hn); Inc(j); end;
+    if (hn <= 6) and ((j >= n) or (cl.a[j].ch = 32)) then begin
+      for k := ind to j - 1 do kill[k] := True;
+      if j < n then kill[j] := True;
+      baseFg := MD_HEAD_FG;
+      i := j;
+    end;
+  end else if c = Ord('>') then begin
+    k := ind;
+    while (k < n) and (cl.a[k].ch = Ord('>')) do begin
+      kill[k] := True; Inc(k);
+      if (k < n) and (cl.a[k].ch = 32) then begin kill[k] := True; Inc(k); end;
+    end;
+    baseFg := MD_QUOTE_FG;
+    i := k;
+  end else if ((c = Ord('-')) or (c = Ord('*')) or (c = Ord('+'))) and (Ch(ind + 1) = 32) then begin
+    cl.a[ind].ch := 7; cl.a[ind].fg := MD_BULLET_FG;
+    i := ind + 2;
+  end else if (c >= 48) and (c <= 57) then begin
+    j := ind;
+    while (j < n) and (cl.a[j].ch >= 48) and (cl.a[j].ch <= 57) do Inc(j);
+    if (j < n) and (j - ind <= 9) and ((cl.a[j].ch = Ord('.')) or (cl.a[j].ch = Ord(')'))) and (Ch(j + 1) = 32) then begin
+      for k := ind to j do cl.a[k].fg := MD_BULLET_FG;
+      i := j + 2;
+    end;
+  end;
+
+  { inline constructs from i onwards }
+  while i < n do begin
+    if kill[i] then begin Inc(i); Continue; end;
+    c := cl.a[i].ch;
+    if (c = Ord('\')) and MdPunct(Ch(i + 1)) then begin
+      kill[i] := True; Inc(i, 2); Continue;
+    end;
+    if c = Ord('`') then begin
+      r := 0;
+      while Ch(i + r) = Ord('`') do Inc(r);
+      j := i + r;
+      m := -1;
+      while j < n do begin
+        if cl.a[j].ch = Ord('`') then begin
+          k := 0;
+          while Ch(j + k) = Ord('`') do Inc(k);
+          if k = r then begin m := j; Break; end;
+          Inc(j, k);
+        end else Inc(j);
+      end;
+      if m < 0 then begin Inc(i, r); Continue; end;
+      for k := i to i + r - 1 do kill[k] := True;
+      for k := m to m + r - 1 do kill[k] := True;
+      MarkRange(i + r, m - 1, MD_CODE);
+      i := m + r;
+      Continue;
+    end;
+    if c = Ord('[') then begin
+      k := i + 1;
+      while (k < n) and (cl.a[k].ch <> Ord(']')) do Inc(k);
+      if (k + 1 < n) and (Ch(k + 1) = Ord('(')) then begin
+        m := k + 2;
+        while (m < n) and (cl.a[m].ch <> Ord(')')) do Inc(m);
+        if m < n then begin
+          kill[i] := True;
+          for j := k to m do kill[j] := True;
+          MarkRange(i + 1, k - 1, MD_LINK);
+          i := m + 1;
+          Continue;
+        end;
+      end;
+      Inc(i);
+      Continue;
+    end;
+    if (c = Ord('*')) or (c = Ord('_')) then begin
+      r := 1;
+      if Ch(i + 1) = c then r := 2;
+      if (Ch(i + r) <> 0) and (Ch(i + r) <> 32) and not ((c = Ord('_')) and MdAlnum(Ch(i - 1))) then begin
+        m := -1;
+        j := i + r;
+        while j < n do begin
+          if (not kill[j]) and (cl.a[j].ch = c) and ((r = 1) or (Ch(j + 1) = c)) and (Ch(j - 1) <> 32)
+             and (j > i + r) and not ((c = Ord('_')) and MdAlnum(Ch(j + r))) then begin
+            m := j; Break;
+          end;
+          Inc(j);
+        end;
+        if m >= 0 then begin
+          for k := i to i + r - 1 do kill[k] := True;
+          for k := m to m + r - 1 do kill[k] := True;
+          if r = 2 then MarkRange(i + r, m - 1, MD_BOLD) else MarkRange(i + r, m - 1, MD_ITAL);
+          Inc(i, r);
+          Continue;
+        end;
+      end;
+      Inc(i, r);
+      Continue;
+    end;
+    Inc(i);
+  end;
+
+  { apply styles and drop the marker cells }
+  outN := 0;
+  for i := 0 to n - 1 do begin
+    if kill[i] then Continue;
+    if (baseFg >= 0) and (cl.a[i].fg < 0) then cl.a[i].fg := baseFg;
+    if (mf[i] and MD_CODE) <> 0 then begin
+      cl.a[i].fl := 0; cl.a[i].fg := MD_CODE_FG; cl.a[i].bg := MD_CODE_BG;
+    end else if (mf[i] and MD_LINK) <> 0 then cl.a[i].fg := MD_LINK_FG
+    else if (mf[i] and (MD_BOLD or MD_ITAL)) = (MD_BOLD or MD_ITAL) then cl.a[i].fg := MD_BOTH_FG
+    else if (mf[i] and MD_BOLD) <> 0 then cl.a[i].fg := MD_BOLD_FG
+    else if (mf[i] and MD_ITAL) <> 0 then cl.a[i].fg := MD_ITAL_FG;
+    cl.a[outN] := cl.a[i];
+    Inc(outN);
+  end;
+  cl.n := outN;
+end;
+
 { ---------------------------------------------------------------- construction / loading }
 
 constructor TViewer.Create;
@@ -470,7 +673,7 @@ begin
   inherited Create;
   path := ''; name := ''; mtime := '';
   SetLength(data, 0); SetLength(starts, 0);
-  utf8 := True;
+  utf8 := True; isMd := False;
   base := 0; lineBase := 0; fileLen := 0; limit := 1 shl 20;
   lbValid := True;
   SetLength(anchors, 1); anchors[0].off := 0; anchors[0].nl := 0;
@@ -485,7 +688,7 @@ end;
 procedure TViewer.Assign(src: TViewer);
 begin
   path := src.path; name := src.name; mtime := src.mtime;
-  data := src.data; starts := src.starts; utf8 := src.utf8;
+  data := src.data; starts := src.starts; utf8 := src.utf8; isMd := src.isMd;
   base := src.base; lineBase := src.lineBase; fileLen := src.fileLen; limit := src.limit;
   lbValid := src.lbValid; anchors := Copy(src.anchors);
   isStream := src.isStream; streamDone := src.streamDone; wasDone := src.wasDone;
@@ -517,6 +720,7 @@ end;
 
 procedure TViewer.OpenFile(const APath: string; ALimit: Int64);
 var
+  ext: string;
   sr: TSearchRec;
   dt: TDateTime;
   age: LongInt;
@@ -527,6 +731,8 @@ begin
   FindClose(sr);
   path := APath;
   name := ExtractFileName(APath);
+  ext := LowerCase(ExtractFileExt(APath));
+  isMd := (ext = '.md') or (ext = '.markdown') or (ext = '.mdown');
   age := FileAge(APath);
   if age <> -1 then begin
     dt := FileDateToDateTime(age);
@@ -1065,6 +1271,7 @@ begin
     Inc(p);
   end;
   curFl := 0; curFg := -1; curBg := -1;
+  if isMd and o.md then MdPass(cl, vw);
 end;
 
 function TViewer.RowsOf(i: Integer; const o: TOpts): Integer;

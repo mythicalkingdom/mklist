@@ -2,7 +2,7 @@
 
 A Free Pascal port of the Rust `list` text-mode file browser (itself modelled on Vernon Buerg's DOS
 LIST): same keys, text and hex modes, status lines top and bottom, memory-windowed reading of big
-files, stdin as a pager, follow/tail, command history, remembered positions, bytes search, and regex search, and ANSI colour/bold/underline codes and man-page backspace overstrike (shown as colours).
+files, stdin as a pager, follow/tail, command history, remembered positions, bytes search, and regex search, and ANSI colour/bold/underline codes and man-page backspace overstrike (shown as colours), and Markdown formatting for .md files (toggle with the `md` command).
 
     make                              # needs fpc 3.2+; produces ./list (about 420 KB)
     make install                      # /usr/local/bin/list (may need sudo)
