@@ -1,4 +1,4 @@
-program list;
+program mklist;
 {$mode objfpc}{$H+}
 { LIST - a cross-platform text-mode file browser modelled on Vernon Buerg's DOS LIST.
   Free Pascal port. }
@@ -11,14 +11,14 @@ const
   VERSION = '0.1.0';
   USAGE =
     'LIST - text mode file browser (DOS LIST compatible keys)' + LineEnding + LineEnding +
-    'usage: list [-x] [-m SIZE] [- | file | wildcard | directory]...' + LineEnding +
-    '       command | list          (reads standard input, like a pager)' + LineEnding + LineEnding +
+    'usage: mklist [-x] [-m SIZE] [- | file | wildcard | directory]...' + LineEnding +
+    '       command | mklist          (reads standard input, like a pager)' + LineEnding + LineEnding +
     '  -x, --hex       start in hex mode' + LineEnding +
     '  -m, --mem SIZE  max bytes of a file kept in memory (K/M/G suffix, default 1M);' + LineEnding +
     '                  larger files are read in windows as you move through them' + LineEnding +
     '  -V, --version   print the version' + LineEnding +
     '  -h, --help      this text' + LineEnding + LineEnding +
-    'Other options are ignored, so list can be used as $PAGER.' + LineEnding +
+    'Other options are ignored, so mklist can be used as $PAGER.' + LineEnding +
     'When output is not a terminal the files (or stdin) are simply copied to it.' + LineEnding +
     'Press F1 inside the program for the key list.';
 
@@ -59,7 +59,7 @@ begin
     else begin
       h := FileOpen(items[i], fmOpenRead or fmShareDenyNone);
       if h = THandle(-1) then
-        WriteLn(StdErr, 'list: cannot open ', items[i])
+        WriteLn(StdErr, 'mklist: cannot open ', items[i])
       else begin
         CopyHandle(h);
         FileClose(h);
@@ -91,20 +91,20 @@ begin
       WriteLn(USAGE);
       Halt(0);
     end else if (a = '-V') or (a = '--version') then begin
-      WriteLn('list ', VERSION, ' (Free Pascal)');
+      WriteLn('mklist ', VERSION, ' (Free Pascal)');
       Halt(0);
     end else if (a = '-x') or (a = '--hex') then
       hex := True
     else if (a = '-m') or (a = '--mem') then begin
       Inc(i);
       if (i > ParamCount) or not ParseSize(ParamStr(i), n) then begin
-        WriteLn(StdErr, 'list: bad or missing size for --mem (try 512K, 1M, 8M)');
+        WriteLn(StdErr, 'mklist: bad or missing size for --mem (try 512K, 1M, 8M)');
         Halt(1);
       end;
       mem := n;
     end else if Copy(a, 1, 6) = '--mem=' then begin
       if not ParseSize(Copy(a, 7, MaxInt), n) then begin
-        WriteLn(StdErr, 'list: bad size for --mem (try 512K, 1M, 8M)');
+        WriteLn(StdErr, 'mklist: bad size for --mem (try 512K, 1M, 8M)');
         Halt(1);
       end;
       mem := n;
@@ -112,7 +112,7 @@ begin
       pathArgs := True;
       if not gotStdin then begin items.Add('-'); gotStdin := True; end;
     end else if (Length(a) > 1) and (a[1] = '-') then
-      { unknown options are ignored so that PAGER=list works with tools that pass flags }
+      { unknown options are ignored so that PAGER=mklist works with tools that pass flags }
     else begin
       pathArgs := True;
       if DirectoryExists(a) and (Pos('*', a) = 0) and (Pos('?', a) = 0) then menuDir := a
@@ -125,7 +125,7 @@ begin
     gotStdin := True;
   end;
   if pathArgs and (items.Count = 0) and (menuDir = '') then begin
-    WriteLn(StdErr, 'list: no files match');
+    WriteLn(StdErr, 'mklist: no files match');
     Halt(1);
   end;
   if not IsTerminal(StdOutputHandle) then begin
@@ -144,7 +144,7 @@ begin
     end;
   except
     on E: Exception do begin
-      WriteLn(StdErr, 'list: ', E.Message);
+      WriteLn(StdErr, 'mklist: ', E.Message);
       Halt(1);
     end;
   end;
@@ -153,7 +153,7 @@ begin
     app := TApp.Create(files, menuDir, hex, mem, spool);
   except
     on E: Exception do begin
-      WriteLn(StdErr, 'list: ', E.Message);
+      WriteLn(StdErr, 'mklist: ', E.Message);
       if spool <> nil then spool.Cleanup;
       Halt(1);
     end;

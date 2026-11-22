@@ -1,15 +1,15 @@
-# list (Free Pascal)
+# mklist (Free Pascal)
 
 A Free Pascal port of the Rust `list` text-mode file browser (itself modelled on Vernon Buerg's DOS
 LIST): same keys, text and hex modes, status lines top and bottom, memory-windowed reading of big
 files, stdin as a pager, follow/tail, command history, remembered positions, bytes search, and regex search, and ANSI colour/bold/underline codes and man-page backspace overstrike (shown as colours), and Markdown formatting for .md files (toggle with the `md` command).
 
-    make                              # needs fpc 3.2+; produces ./list (about 420 KB)
-    make install                      # /usr/local/bin/list (may need sudo)
-    make install PREFIX=$HOME/.local  # ~/.local/bin/list
+    make                              # needs fpc 3.2+; produces ./mklist (about 420 KB)
+    make install                      # /usr/local/bin/mklist (may need sudo)
+    make install PREFIX=$HOME/.local  # ~/.local/bin/mklist
     make test                         # behavioural tests (python3 + `pip install pyte`)
-    ./list [-x] [-m SIZE] [- | file | wildcard | directory]...
-    some-command | ./list
+    ./mklist [-x] [-m SIZE] [- | file | wildcard | directory]...
+    some-command | ./mklist
 
 Press F1 for the key list; the README of the Rust version describes the commands. The configuration
 (`list.cfg`, `history.txt`, `positions.txt`) lives in the same folder as the Rust version

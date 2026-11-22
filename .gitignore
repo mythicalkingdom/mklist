@@ -1,5 +1,5 @@
 build/
-list
+mklist
 *.o
 *.ppu
 __pycache__/

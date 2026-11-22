@@ -1,8 +1,8 @@
-"""A small pty-based test harness for the `list` file browser.
+"""A small pty-based test harness for the `mklist` file browser.
 
 It starts the program on a pseudo-terminal, feeds it keys, and reads the screen back through a
 terminal emulator (pyte), so tests can assert on what a user would actually see.
-Works with any implementation of `list` (set LIST_BIN).
+Works with any implementation of `mklist` (set LIST_BIN).
 """
 import fcntl
 import os
