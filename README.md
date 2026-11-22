@@ -4,12 +4,12 @@ A Free Pascal port of the Rust `list` text-mode file browser (itself modelled on
 LIST): same keys, text and hex modes, status lines top and bottom, memory-windowed reading of big
 files, stdin as a pager, follow/tail, command history, remembered positions, bytes search, and regex search, and ANSI colour/bold/underline codes and man-page backspace overstrike (shown as colours), and Markdown formatting for .md files (toggle with the `md` command).
 
-    make                              # needs fpc 3.2+; produces ./mklist (about 420 KB)
+    make                              # needs fpc 3.2+; produces build/mklist (about 420 KB)
     make install                      # /usr/local/bin/mklist (may need sudo)
     make install PREFIX=$HOME/.local  # ~/.local/bin/mklist
     make test                         # behavioural tests (python3 + `pip install pyte`)
-    ./mklist [-x] [-m SIZE] [- | file | wildcard | directory]...
-    some-command | ./mklist
+    build/mklist [-x] [-m SIZE] [- | file | wildcard | directory]...
+    some-command | build/mklist
 
 Press F1 for the key list; the README of the Rust version describes the commands. The configuration
 (`list.cfg`, `history.txt`, `positions.txt`) lives in the same folder as the Rust version
@@ -30,7 +30,7 @@ is highlighted, and in windowed (big) files a match longer than 4 KB that stradd
   no CP437 equivalent (CJK, emoji, ...) appear as `?`. Files that are not UTF-8 are shown as CP437, as before.
 * **Colours:** the 16 standard terminal colours (so exact shades depend on the terminal theme), and only 8
   background colours (0-7). Find highlight defaults to black on brown.
-* **Keyboard:** on Unix the program has its own key decoder (`uKeys.pas`) instead of FPC's `Keyboard` unit,
+* **Keyboard:** on Unix the program has its own key decoder (`src/uKeys.pas`) instead of FPC's `Keyboard` unit,
   which waits for a second key after Esc (freezing the program until then) and stalls on input bursts of more
   than 256 bytes. A lone Esc is delivered after 40 ms, long pastes work, and UTF-8 can be typed on the command
   line. Other platforms use the `Keyboard` unit (build with `-dFORCEKBD` to use it on Unix too).

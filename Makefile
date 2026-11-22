@@ -1,30 +1,36 @@
-# Free Pascal build: `make` produces ./mklist
+# Free Pascal build: `make` produces build/mklist
 FPC    ?= fpc
-FLAGS  ?= -O2 -XX -CX -Xs -FUbuild
+FLAGS  ?= -O2 -XX -CX -Xs -FU$(BUILD)
 PREFIX ?= /usr/local
 DESTDIR ?=
 
-SOURCES = mklist.pas uApp.pas uViewer.pas uScreen.pas uOpts.pas uCP437.pas uSpool.pas uKeys.pas
+SRC     = src
+BUILD   = build
+BIN     = $(BUILD)/mklist
 
-mklist: $(SOURCES)
-	@mkdir -p build
-	$(FPC) $(FLAGS) -Fu. -omklist mklist.pas
+SOURCES = $(addprefix $(SRC)/,mklist.pas uApp.pas uViewer.pas uScreen.pas uOpts.pas uCP437.pas uSpool.pas uKeys.pas)
+
+$(BIN): $(SOURCES)
+	@mkdir -p $(BUILD)
+	$(FPC) $(FLAGS) -Fu$(SRC) -o$(BIN) $(SRC)/mklist.pas
+
+mklist: $(BIN)
 
 # make install                     -> /usr/local/bin/mklist (may need sudo)
 # make install PREFIX=$$HOME/.local -> ~/.local/bin/mklist
-install: mklist
+install: $(BIN)
 	install -d $(DESTDIR)$(PREFIX)/bin
-	install -m 755 mklist $(DESTDIR)$(PREFIX)/bin/mklist
+	install -m 755 $(BIN) $(DESTDIR)$(PREFIX)/bin/mklist
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/mklist
 
 # Behavioural tests on a pseudo-terminal (needs python3 and `pip install pyte`).
 # Run them against another build with: LIST_BIN=/path/to/mklist python3 tests/run_tests.py
-test: mklist
-	LIST_BIN=$(CURDIR)/mklist python3 tests/run_tests.py
+test: $(BIN)
+	LIST_BIN=$(CURDIR)/$(BIN) python3 tests/run_tests.py
 
 clean:
-	rm -rf build mklist
+	rm -rf $(BUILD)
 
-.PHONY: install uninstall test clean
+.PHONY: mklist install uninstall test clean

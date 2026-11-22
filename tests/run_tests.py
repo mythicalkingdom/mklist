@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Behavioural tests for `mklist`, run against a real terminal session.
 
-    python3 tests/run_tests.py                 # tests ./mklist (the Free Pascal build)
+    python3 tests/run_tests.py                 # tests build/mklist (the Free Pascal build)
     LIST_BIN=/path/to/mklist python3 tests/run_tests.py
     python3 tests/run_tests.py -k regex -v     # only tests whose name contains 'regex'
 
@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from harness import Env  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BIN = os.path.abspath(os.environ.get("LIST_BIN", os.path.join(HERE, "..", "mklist")))
+BIN = os.path.abspath(os.environ.get("LIST_BIN", os.path.join(HERE, "..", "build", "mklist")))
 
 TESTS = []
 
